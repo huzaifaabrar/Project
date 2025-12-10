@@ -1,48 +1,84 @@
 #include "i2s_config.h"
 
-// Global channel handle
+// -------------------------
+// GLOBALS
+// -------------------------
+
 i2s_chan_handle_t xI2S_RXChanHandle = NULL;
+
+size_t xI2S_uReadBufferSizeBytes = 0;
+size_t xI2S_uNumSamples = 0;
+
+// Double buffers (ping–pong)
+int32_t *activeBuffer = NULL;
+int32_t *inactiveBuffer = NULL;
 
 // I2S reader task
 static void vTaskI2SReader(void *pvParameters)
 {
-    // Properly aligned buffer for 32-bit reads
-    int32_t plReadBuf[I2S_READ_BUFFER_LEN / sizeof(int32_t)];
-    size_t xSamplesRead = 0;
+    size_t bytesRead = 0;
 
-    while (1) {
-        esp_err_t xErr = i2s_channel_read(
+    for (;;)
+    {
+        // Blocking read fills activeBuffer
+        esp_err_t err = i2s_channel_read(
             xI2S_RXChanHandle,
-            (uint8_t *)plReadBuf,
-            I2S_READ_BUFFER_LEN,
-            &xSamplesRead,
-            portMAX_DELAY
-        );
+            activeBuffer,
+            xI2S_uReadBufferSizeBytes,
+            &bytesRead,
+            portMAX_DELAY);
 
-        if (xErr == ESP_OK && xSamplesRead > 0) {
-            size_t xNumSamples = xSamplesRead / sizeof(int32_t);
+        if (err == ESP_OK && bytesRead > 0)
+        {
+            // Swap ping–pong buffers
+            int32_t *temp = activeBuffer;
+            activeBuffer  = inactiveBuffer;
+            inactiveBuffer = temp;
 
-            // Process first sample (or add processing loop)
-            int32_t lFirstSample = plReadBuf[0];
-            printf("Mic Sample: %ld\n", lFirstSample);
+            // Now inactiveBuffer has a FULL 4-second window
+            printf("Received %.2f sec audio (%u bytes)\n",
+                   I2S_BUFFER_TIME_SEC, (unsigned)bytesRead);
 
-            // Optional: loop over all samples
-            // for (size_t x = 0; x < xNumSamples; x++) { ... }
+            printf("First sample: %ld\n", inactiveBuffer[0]);
         }
     }
 }
+
 
 // Initialize I2S RX channel
 void vI2S_InitRX(void)
 {
     esp_err_t xErr;
 
+    // Calculate read buffer size based on time duration
+    xI2S_uReadBufferSizeBytes =
+        (size_t)(I2S_SAMPLE_RATE_HZ *
+                 (I2S_SAMPLE_BITS / 8) *
+                 1 *
+                 I2S_BUFFER_TIME_SEC);
+
+    xI2S_uNumSamples = xI2S_uReadBufferSizeBytes / sizeof(int32_t);
+
+    ESP_LOGI("INMP441",
+        "Allocating %.2f seconds (%u bytes, %u samples)",
+        I2S_BUFFER_TIME_SEC,
+        (unsigned)xI2S_uReadBufferSizeBytes,
+        (unsigned)xI2S_uNumSamples);
+
+    // Allocate ping-pong buffers
+    activeBuffer   = malloc(xI2S_uReadBufferSizeBytes);
+    inactiveBuffer = malloc(xI2S_uReadBufferSizeBytes);
+
+    configASSERT(activeBuffer != NULL);
+    configASSERT(inactiveBuffer != NULL);
+
+
     // 1) RX channel config
     i2s_chan_config_t xChanCfg = {
         .id = I2S_NUM_0,
         .role = I2S_ROLE_MASTER,
-        .dma_desc_num = 4,
-        .dma_frame_num = 128,
+        .dma_desc_num = 8,
+        .dma_frame_num = 512,
         .auto_clear = pdTRUE,
     };
 
@@ -82,6 +118,9 @@ void vI2S_InitRX(void)
     // 8) Enable RX channel
     xErr = i2s_channel_enable(xI2S_RXChanHandle);
     ESP_ERROR_CHECK(xErr);
+
+    
+
 
     ESP_LOGI("INMP441", "I2S RX initialized (Philips mono, 32-bit, %d Hz).", I2S_SAMPLE_RATE_HZ);
 }
