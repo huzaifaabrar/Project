@@ -1,80 +1,171 @@
 #include "i2s_config.h"
+#include <string.h>             // memcpy
+#include <stdlib.h>             // malloc, free
+#include "esp_heap_caps.h"      // heap_caps_malloc
+#include "esp_err.h"
 
 // -------------------------
 // GLOBALS
 // -------------------------
-
 i2s_chan_handle_t xI2S_RXChanHandle = NULL;
-
 size_t xI2S_uReadBufferSizeBytes = 0;
-size_t xI2S_uNumSamples = 0;
+size_t xI2S_uChunkBytes = 0;
+size_t xI2S_uNumChunks = 0;
 
-// Double buffers (ping–pong)
-int32_t *activeBuffer = NULL;
-int32_t *inactiveBuffer = NULL;
+// Ring buffer pointer (allocated at init)
+static uint8_t *pRingBuffer = NULL;
 
-// I2S reader task
+// Small chunk buffers (stack-safe size). CHUNK_BYTES is compile-time safe macro:
+#define BYTES_PER_SAMPLE   (I2S_SAMPLE_BITS / 8U)
+#define CHUNK_BYTES_STATIC ((I2S_SAMPLE_RATE_HZ * BYTES_PER_SAMPLE * I2S_CHUNK_MS) / 1000U)
+
+static uint8_t chunkA[CHUNK_BYTES_STATIC];
+static uint8_t chunkB[CHUNK_BYTES_STATIC];
+static uint8_t *pActiveChunk = chunkA;
+static uint8_t *pInactiveChunk = chunkB;
+
+// Writer state into ring buffer
+static size_t writeOffset = 0;
+static size_t chunksFilled = 0;
+
+// Forward declarations
+static void prvAllocateRingBufferOrAdjust(void);
+static void prvReaderTaskInitI2S(void);
+
+// -------------------------
+// Weak callback default
+// -------------------------
+__attribute__((weak))
+void vI2S_WindowReadyCallback(void *pWindowBuffer, size_t uBytes)
+{
+    // Default implementation: just log. Override in application for FFT processing.
+    ESP_LOGI("INMP441", "Window ready callback: %u bytes at %p", (unsigned)uBytes, pWindowBuffer);
+}
+
+// -------------------------
+// READER TASK
+// -------------------------
 static void vTaskI2SReader(void *pvParameters)
 {
     size_t bytesRead = 0;
 
-    for (;;)
+    while (1)
     {
-        // Blocking read fills activeBuffer
+        // Read one chunk into the active small chunk buffer
         esp_err_t err = i2s_channel_read(
             xI2S_RXChanHandle,
-            activeBuffer,
-            xI2S_uReadBufferSizeBytes,
+            pActiveChunk,
+            xI2S_uChunkBytes,
             &bytesRead,
             portMAX_DELAY);
 
-        if (err == ESP_OK && bytesRead > 0)
-        {
-            // Swap ping–pong buffers
-            int32_t *temp = activeBuffer;
-            activeBuffer  = inactiveBuffer;
-            inactiveBuffer = temp;
+        if (err != ESP_OK) {
+            ESP_LOGE("INMP441", "i2s_channel_read failed: %d", err);
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
 
-            // Now inactiveBuffer has a FULL 4-second window
-            printf("Received %.2f sec audio (%u bytes)\n",
-                   I2S_BUFFER_TIME_SEC, (unsigned)bytesRead);
+        if (bytesRead == 0) {
+            // no data, try again
+            continue;
+        }
 
-            printf("First sample: %ld\n", inactiveBuffer[0]);
+        // Copy chunk into the ring buffer at current write offset
+        if (pRingBuffer != NULL) {
+            memcpy(pRingBuffer + writeOffset, pActiveChunk, bytesRead);
+        }
+
+        // Advance write offset and chunk counters
+        writeOffset += bytesRead;
+        chunksFilled++;
+
+        // Swap small chunk buffers (ping-pong)
+        uint8_t *tmp = pActiveChunk;
+        pActiveChunk = pInactiveChunk;
+        pInactiveChunk = tmp;
+
+        // If we've filled the configured number of chunks -> window complete
+        if (chunksFilled >= xI2S_uNumChunks) {
+            // Call the weak callback with the start of the ring buffer
+            vI2S_WindowReadyCallback((void *)pRingBuffer, xI2S_uReadBufferSizeBytes);
+
+            // Reset for next accumulation
+            writeOffset = 0;
+            chunksFilled = 0;
         }
     }
 }
 
+// -------------------------
+// Helper: allocate ring buffer in PSRAM if possible,
+// otherwise try heap; if allocation fails reduce window to 1s and retry.
+// -------------------------
+static void prvAllocateRingBufferOrAdjust(void)
+{
+    // compute target sizes
+    xI2S_uChunkBytes = (I2S_SAMPLE_RATE_HZ * BYTES_PER_SAMPLE * I2S_CHUNK_MS) / 1000U;
+    xI2S_uReadBufferSizeBytes = (size_t)(I2S_SAMPLE_RATE_HZ * BYTES_PER_SAMPLE * I2S_BUFFER_TIME_SEC);
+    xI2S_uNumChunks = xI2S_uReadBufferSizeBytes / xI2S_uChunkBytes;
 
-// Initialize I2S RX channel
+    ESP_LOGI("INMP441", "Requesting ring buffer: %.2f sec -> %u bytes (%u chunks of %u bytes)",
+             I2S_BUFFER_TIME_SEC,
+             (unsigned)xI2S_uReadBufferSizeBytes,
+             (unsigned)xI2S_uNumChunks,
+             (unsigned)xI2S_uChunkBytes);
+
+    // Try PSRAM first (if present)
+    pRingBuffer = (uint8_t *) heap_caps_malloc(xI2S_uReadBufferSizeBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    if (pRingBuffer != NULL) {
+        ESP_LOGI("INMP441", "Allocated ring buffer in PSRAM at %p", pRingBuffer);
+        return;
+    }
+
+    // Fallback: try regular heap
+    pRingBuffer = (uint8_t *) malloc(xI2S_uReadBufferSizeBytes);
+    if (pRingBuffer != NULL) {
+        ESP_LOGI("INMP441", "Allocated ring buffer in heap at %p", pRingBuffer);
+        return;
+    }
+
+    // Allocation failed. Try to reduce window to 1.0 sec and try again.
+    if (I2S_BUFFER_TIME_SEC > 1.0f) {
+        size_t newBytes = (size_t)(I2S_SAMPLE_RATE_HZ * BYTES_PER_SAMPLE * 1.0f);
+        ESP_LOGW("INMP441", "Ring allocation failed. Trying 1.0 sec window (%u bytes).", (unsigned)newBytes);
+
+        // Update globals for 1s
+        xI2S_uReadBufferSizeBytes = newBytes;
+        xI2S_uNumChunks = xI2S_uReadBufferSizeBytes / xI2S_uChunkBytes;
+
+        // retry psram then heap
+        pRingBuffer = (uint8_t *) heap_caps_malloc(xI2S_uReadBufferSizeBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (pRingBuffer == NULL) {
+            pRingBuffer = (uint8_t *) malloc(xI2S_uReadBufferSizeBytes);
+        }
+
+        if (pRingBuffer != NULL) {
+            ESP_LOGI("INMP441", "Allocated reduced ring buffer at %p (%u bytes)", pRingBuffer, (unsigned)xI2S_uReadBufferSizeBytes);
+            return;
+        }
+    }
+
+    // Still failed — fatal for this feature
+    ESP_LOGE("INMP441", "Failed to allocate ring buffer. Acquisition cannot proceed.");
+    configASSERT(pRingBuffer != NULL);
+}
+
+// -------------------------
+// I2S RX initialization (unchanged semantics)
+// -------------------------
 void vI2S_InitRX(void)
 {
     esp_err_t xErr;
 
-    // Calculate read buffer size based on time duration
-    xI2S_uReadBufferSizeBytes =
-        (size_t)(I2S_SAMPLE_RATE_HZ *
-                 (I2S_SAMPLE_BITS / 8) *
-                 1 *
-                 I2S_BUFFER_TIME_SEC);
+    // compute chunk and window sizes and allocate ring buffer
+    prvAllocateRingBufferOrAdjust();
 
-    xI2S_uNumSamples = xI2S_uReadBufferSizeBytes / sizeof(int32_t);
-
-    ESP_LOGI("INMP441",
-        "Allocating %.2f seconds (%u bytes, %u samples)",
-        I2S_BUFFER_TIME_SEC,
-        (unsigned)xI2S_uReadBufferSizeBytes,
-        (unsigned)xI2S_uNumSamples);
-
-    // Allocate ping-pong buffers
-    activeBuffer   = malloc(xI2S_uReadBufferSizeBytes);
-    inactiveBuffer = malloc(xI2S_uReadBufferSizeBytes);
-
-    configASSERT(activeBuffer != NULL);
-    configASSERT(inactiveBuffer != NULL);
-
-
-    // 1) RX channel config
-    i2s_chan_config_t xChanCfg = {
+    // Configure channel
+    i2s_chan_config_t chanCfg = {
         .id = I2S_NUM_0,
         .role = I2S_ROLE_MASTER,
         .dma_desc_num = 8,
@@ -82,20 +173,14 @@ void vI2S_InitRX(void)
         .auto_clear = pdTRUE,
     };
 
-    // 2) Create RX channel
-    xErr = i2s_new_channel(&xChanCfg, NULL, &xI2S_RXChanHandle);
+    xErr = i2s_new_channel(&chanCfg, NULL, &xI2S_RXChanHandle);
     ESP_ERROR_CHECK(xErr);
 
-    // 3) Standard mode clock config
-    i2s_std_clk_config_t xClkCfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE_HZ);
+    i2s_std_clk_config_t clkCfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE_HZ);
 
-    // 4) Slot config (Philips mono)
-    i2s_std_slot_config_t xSlotCfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-        I2S_SAMPLE_BITS, I2S_SLOT_MODE_MONO
-    );
+    i2s_std_slot_config_t slotCfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_SAMPLE_BITS, I2S_SLOT_MODE_MONO);
 
-    // 5) GPIO config
-    i2s_std_gpio_config_t xGPIOCfg = {
+    i2s_std_gpio_config_t gpioCfg = {
         .mclk = I2S_GPIO_UNUSED,
         .bclk = 5,
         .ws   = 6,
@@ -104,38 +189,37 @@ void vI2S_InitRX(void)
         .invert_flags = {0},
     };
 
-    // 6) Standard mode config
-    i2s_std_config_t xStdCfg = {
-        .clk_cfg = xClkCfg,
-        .slot_cfg = xSlotCfg,
-        .gpio_cfg = xGPIOCfg,
+    i2s_std_config_t stdCfg = {
+        .clk_cfg = clkCfg,
+        .slot_cfg = slotCfg,
+        .gpio_cfg = gpioCfg,
     };
 
-    // 7) Initialize channel
-    xErr = i2s_channel_init_std_mode(xI2S_RXChanHandle, &xStdCfg);
+    xErr = i2s_channel_init_std_mode(xI2S_RXChanHandle, &stdCfg);
     ESP_ERROR_CHECK(xErr);
 
-    // 8) Enable RX channel
     xErr = i2s_channel_enable(xI2S_RXChanHandle);
     ESP_ERROR_CHECK(xErr);
 
-    
-
-
-    ESP_LOGI("INMP441", "I2S RX initialized (Philips mono, 32-bit, %d Hz).", I2S_SAMPLE_RATE_HZ);
+    ESP_LOGI("INMP441", "I2S RX initialized (mono, %u-bit, %u Hz). Chunk %u bytes, window %u bytes",
+             (unsigned)I2S_SAMPLE_BITS,
+             (unsigned)I2S_SAMPLE_RATE_HZ,
+             (unsigned)xI2S_uChunkBytes,
+             (unsigned)xI2S_uReadBufferSizeBytes);
 }
 
-// Start the reader task
+// -------------------------
+// Start reader task
+// -------------------------
 void vI2S_StartReaderTask(void)
 {
-    BaseType_t xReturned = xTaskCreate(
+    BaseType_t res = xTaskCreate(
         vTaskI2SReader,
         TASK_I2S_READER_NAME,
         TASK_I2S_READER_STACK,
         NULL,
         TASK_I2S_READER_PRIORITY,
-        NULL
-    );
+        NULL);
 
-    configASSERT(xReturned == pdPASS);
+    configASSERT(res == pdPASS);
 }
