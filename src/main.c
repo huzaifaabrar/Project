@@ -2,6 +2,8 @@
 
 void app_main(void)
 {
-    vI2S_InitRX();           // Initialize I2S RX
-    vI2S_StartReaderTask();  // Start FreeRTOS I2S reader task
+    vI2S_InitRX();              // Initialize I2S
+    vI2S_StartReaderTask();     // Start microphone task
+    setupMicrophoneTimer();     // Start periodic timer
 }
+
