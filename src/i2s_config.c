@@ -5,14 +5,15 @@
 // ------------------------------------
 i2s_chan_handle_t xI2S_RXChanHandle = NULL;
 TaskHandle_t xMicTaskHandle = NULL;  // Define the task handle
+QueueHandle_t xAudioBufferQueue = NULL;  // Define the queue handle
 
 
 // Ping-pong buffers for small chunks
-static uint8_t I2S_Buffer_A[BUFFER_SIZE_BYTES];
-static uint8_t I2S_Buffer_B[BUFFER_SIZE_BYTES];
+ int32_t I2S_Buffer_A[SAMPLE_BUFFER_SIZE];
+ int32_t I2S_Buffer_B[SAMPLE_BUFFER_SIZE];
 
-static void *activeBuffer = I2S_Buffer_A;
-static void *inactiveBuffer = I2S_Buffer_B;
+ int32_t *activeBuffer = I2S_Buffer_A;
+ int32_t *inactiveBuffer = I2S_Buffer_B;
 
 
 // ------------------------------------
@@ -30,11 +31,12 @@ void vTaskI2SReader(void *pvParameters)
         esp_err_t err = i2s_channel_read(
             xI2S_RXChanHandle,
             activeBuffer,
-            BUFFER_SIZE_BYTES,
+            BUFFER_READ_SIZE,
             &bytesRead,
             portMAX_DELAY);
 
-        if (err == ESP_OK && bytesRead == BUFFER_SIZE_BYTES)
+        int samplesRead = bytesRead / sizeof(int32_t);    
+        if (err == ESP_OK && bytesRead == BUFFER_READ_SIZE)
         {
             // Swap buffers
             void *tmp = activeBuffer;
@@ -42,9 +44,25 @@ void vTaskI2SReader(void *pvParameters)
             inactiveBuffer = tmp;
 
             // Optional debug
-            printf("Read %u bytes\n", (unsigned)bytesRead);
+            // printf("Read %u bytes\n", (unsigned)bytesRead);
+            printf("Starting samples printing\n");
+            for (int i = 0; i < samplesRead; i++) {
+                    // printf("index %3d:  (%ld)\n", i, samples[i]);   //signed decimal
+                    printf("%ld\n", inactiveBuffer[i]);
+                }
+            printf("Finished samples printing\n");
+            
+            // Send inactiveBuffer to FFT task via queue
+            if (xAudioBufferQueue != NULL)
+            {
+                // BaseType_t xStatus = xQueueSendToBack(xAudioBufferQueue, &activeBuffer, 0);  // No wait
+                // if (xStatus != pdPASS)
+                // {
+                //     printf("Warning: Failed to send buffer to queue\n");
+                // }
+            }
 
-            // TODO: Send inactiveBuffer to FFT task via queue
+            
         }
         else
         {
@@ -65,9 +83,9 @@ void vI2S_InitRX(void)
     i2s_chan_config_t chanCfg = {
         .id = I2S_NUM_0,
         .role = I2S_ROLE_MASTER,
-        .dma_desc_num = 8,
-        .dma_frame_num = 256,  // Smaller for low latency
-        .auto_clear = true,
+        .dma_desc_num = 6,
+        .dma_frame_num = 240,  // Smaller for low latency
+        .auto_clear = false,
     };
 
     xErr = i2s_new_channel(&chanCfg, NULL, &xI2S_RXChanHandle);
@@ -104,6 +122,10 @@ void vI2S_InitRX(void)
     ESP_ERROR_CHECK(xErr);
 
     ESP_LOGI("INMP441", "I2S RX initialized: MONO, %d-bit, %d Hz", I2S_SAMPLE_BITS, I2S_SAMPLE_RATE_HZ);
+
+
+    // Create audio buffer queue
+    xAudioBufferQueue = xQueueCreate(5, sizeof(void*));
 }
 
 // ------------------------------------
@@ -136,13 +158,14 @@ void setupMicrophoneTimer(void)
 // ------------------------------------
 void vI2S_StartReaderTask(void)
 {
-    BaseType_t res = xTaskCreate(
+    BaseType_t res = xTaskCreatePinnedToCore(
         vTaskI2SReader,
         TASK_I2S_READER_NAME,
         TASK_I2S_READER_STACK,
         NULL,
         TASK_I2S_READER_PRIORITY,
-        &xMicTaskHandle);  // Save task handle
+        &xMicTaskHandle, // Save task handle
+        1);  
 
     configASSERT(res == pdPASS);
 }
