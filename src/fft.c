@@ -5,19 +5,28 @@
 #include <math.h>
 
 
+#define USE_LONG_WINDOW   0   // 1 = long-window, 0 = short-window
+
+
 static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag, ...]
 
 
 // Example bin range to monitor (e.g., 2 kHz to 3 kHz)
-#define Freq_START_HZ               2000 // Start frequency in Hz
-#define Freq_END_HZ                 3000 // End frequency in Hz
+#define Freq_START_HZ               2750 // Start frequency in Hz
+#define Freq_END_HZ                 3250 // End frequency in Hz
 #define BIN_START                   ((int)((Freq_START_HZ * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate start bin
 #define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
 #define THRESHOLD_DB                -50.0f  // dB threshold for detection
-#define DETECT_COUNT                5      // Number of consecutive detections to trigger alarm
+#if USE_LONG_WINDOW
+    #define DETECT_COUNT             5      // Number of consecutive detections to trigger alarm
+#else
+    #define DETECT_COUNT             10      // Number of consecutive detections to trigger alarm
+#endif
 
 #define NUM_BINS                    (FFT_SIZE / 2)  // Number of FFT bins for real FFT
-#define LONG_WINDOW_FRAMES          24  // ~1s at 48kHz and 2048 FFT size (24 * 2048 / 48000 ≈ 1.024s)
+#define LONG_WINDOW_SECONDS         0.5f   // 1 second
+#define LONG_WINDOW_FRAMES          ((int)ceil(LONG_WINDOW_SECONDS * I2S_SAMPLE_RATE_HZ / FFT_SIZE))
+
 
 static float avgSpectrum[NUM_BINS];
 static int frameCount = 0;
@@ -27,6 +36,26 @@ static int detectionCounter = 0;
 static int  normalizeBuffer(int32_t* buffer, float* real, int length);
 static void applyWindow(float* data, int length);
 static void analyzeBins(float* fftData, int startBin, int endBin, float threshold);
+
+// Windowing reference sum for normalization
+static float window_sum = 0.0f;
+static bool window_initialized = false;
+
+static void initWindowRef(void)
+{
+    if (window_initialized)
+        return;
+
+    for (int n = 0; n < FFT_SIZE; n++)
+    {
+        float w = 0.54f - 0.46f * cosf((2.0f * M_PI * n) / (FFT_SIZE - 1)); // Hamming
+        window_sum += w;
+    }
+
+    window_initialized = true;
+}
+
+
 
 // FFT Task
 void vFFTProcessorTask(void* pvParameters)
@@ -113,73 +142,33 @@ static void applyWindow(float *data, int length)
 // Analyze FFT bins for threshold crossing
 static void analyzeBins(float *fftData, int startBin, int endBin, float threshold_dB)
 {
-    const float window_gain = 0.54f;     // Hamming
-    const float ref = FFT_SIZE * window_gain;
-    
-
-    /* -------------------------------------------------------------------
-     * short-window FFT analysis, quick to trigger but more prone 
-     * to false alarms.
-     * -------------------------------------------------------------------*/
-        
     bool detected = false;
-    for (int i = startBin; i <= endBin; i++)
+
+#if USE_LONG_WINDOW
+    // -------------------------------
+    // Long-window averaging
+    // -------------------------------
+    for (int i = 0; i < NUM_BINS; i++)
     {
-        float re = fftData[2*i];
-        float im = fftData[2*i + 1];
-
-        float mag = sqrtf(re * re + im * im);
-
-        // dBFS (safe log)
-        float powerDB = 20.0f * log10f((mag / ref) + 1e-12f);
-
-        // Debug (optional)
-        // printf("Bin %d: %.2f dBFS\n", i, powerDB);
-
-        if (powerDB > threshold_dB)
-        {
-            detected = true;
-            // printf("Bin %d: %.2f dBFS\n", i, powerDB);
-            break;
-        }
-    }
-
-    if (detected)
-        detectionCounter++;
-    else if (detectionCounter > 0)
-        detectionCounter--;  // decay instead of reset
-
-    if (detectionCounter >= DETECT_COUNT)
-    {
-        printf("🚨 Alarm triggered!\n");
-        
-        detectionCounter = 0;
-    }
-
-
-    /* -------------------------------------------------------------------
-     * Long-window FFT analysis, averaging over LONG_WINDOW_FRAMES Takes 
-     * time to trigger but more robust to false alarms.
-     * -------------------------------------------------------------------*/
-    /*
-    // Magnitude + running average
-    for (int i = 0; i < NUM_BINS; i++) {
         float re = fftData[2*i];
         float im = fftData[2*i + 1];
         float mag = sqrtf(re*re + im*im);
+
+        if (i != 0 && i != (FFT_SIZE / 2))
+            mag *= 2.0f;
 
         avgSpectrum[i] = (avgSpectrum[i] * frameCount + mag) / (frameCount + 1);
     }
 
     frameCount++;
 
-    // Check long-window detection
-    if (frameCount >= LONG_WINDOW_FRAMES) {
-        bool detected = false;
-
-        for (int i = BIN_START; i <= BIN_END; i++) {
-            float powerDB = 20.0f * log10f((avgSpectrum[i] / ref) + 1e-12f);
-            if (powerDB > threshold_dB) {  // adjust threshold
+    if (frameCount >= LONG_WINDOW_FRAMES)
+    {
+        for (int i = startBin; i <= endBin; i++)
+        {
+            float powerDB = 20.0f * log10f((avgSpectrum[i] / window_sum) + 1e-12f);
+            if (powerDB > threshold_dB)
+            {
                 detected = true;
                 break;
             }
@@ -190,20 +179,56 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         else
             detectionCounter = 0;
 
-        if (detectionCounter >= DETECT_COUNT) {
+        if (detectionCounter >= DETECT_COUNT)
+        {
             printf("🚨 Fire Alarm detected!\n");
             detectionCounter = 0;
         }
 
-        // Reset averaging
         frameCount = 0;
         memset(avgSpectrum, 0, sizeof(avgSpectrum));
     }
-    */
+
+#else
+    // -------------------------------
+    // Short-window analysis
+    // -------------------------------
+    for (int i = startBin; i <= endBin; i++)
+    {
+        float re = fftData[2*i];
+        float im = fftData[2*i + 1];
+
+        float mag = sqrtf(re*re + im*im);
+
+        if (i != 0 && i != (FFT_SIZE / 2))
+            mag *= 2.0f;
+
+        float powerDB = 20.0f * log10f((mag / window_sum) + 1e-12f);
+
+        if (powerDB > threshold_dB)
+        {
+            detected = true;
+            break;
+        }
+    }
+
+    if (detected)
+        detectionCounter++;
+    else if (detectionCounter > 0)
+        detectionCounter--;
+
+    if (detectionCounter >= DETECT_COUNT)
+    {
+        printf("🚨 Alarm triggered!\n");
+        detectionCounter = 0;
+    }
+#endif
 }
+
 
 // Start FFT Task
 void vStartFFTTask(QueueHandle_t xAudioBufferQueue)
 {
+    initWindowRef();  // precompute window reference
     xTaskCreate(vFFTProcessorTask, FFT_TASK_NAME, FFT_TASK_STACK, xAudioBufferQueue, FFT_TASK_PRIORITY, NULL);
 }
