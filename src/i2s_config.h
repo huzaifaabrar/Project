@@ -9,7 +9,7 @@
 
 // I2S config constants
 #define I2S_SAMPLE_RATE_HZ    48000   // Match your mic specs
-#define I2S_SAMPLE_BITS       32      // or 16
+#define I2S_SAMPLE_BITS       I2S_DATA_BIT_WIDTH_32BIT      // or 16
 
 // FFT-related settings
 #define SAMPLE_BUFFER_SIZE    2048     // Number of samples per FFT frame

@@ -43,23 +43,23 @@ void vTaskI2SReader(void *pvParameters)
             activeBuffer = inactiveBuffer;
             inactiveBuffer = tmp;
 
-            // Optional debug
-            // printf("Read %u bytes\n", (unsigned)bytesRead);
+            /*// Optional debug
             printf("Starting samples printing\n");
             for (int i = 0; i < samplesRead; i++) {
                     // printf("index %3d:  (%ld)\n", i, samples[i]);   //signed decimal
                     printf("%ld\n", inactiveBuffer[i]);
                 }
             printf("Finished samples printing\n");
+            */
             
             // Send inactiveBuffer to FFT task via queue
             if (xAudioBufferQueue != NULL)
             {
-                // BaseType_t xStatus = xQueueSendToBack(xAudioBufferQueue, &activeBuffer, 0);  // No wait
-                // if (xStatus != pdPASS)
-                // {
-                //     printf("Warning: Failed to send buffer to queue\n");
-                // }
+                BaseType_t xStatus = xQueueSendToBack(xAudioBufferQueue, &inactiveBuffer, 0);  // No wait
+                if (xStatus != pdPASS)
+                {
+                    printf("Warning: Failed to send buffer to queue\n");
+                }
             }
 
             

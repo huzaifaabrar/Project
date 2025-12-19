@@ -10,7 +10,7 @@ void app_main(void)
     vI2S_StartReaderTask();     // Start microphone task
     setupMicrophoneTimer();     // Start periodic timer
 
-    //vStartFFTTask(xAudioBufferQueue); // Start FFT processing task
+    vStartFFTTask(xAudioBufferQueue); // Start FFT processing task
 
     // test_fft();  // Run minimal FFT test
 }
