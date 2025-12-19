@@ -6,15 +6,21 @@
 
 
 static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag, ...]
-static float vImag[SAMPLE_BUFFER_SIZE];
+
 
 // Example bin range to monitor (e.g., 2 kHz to 3 kHz)
-#define BIN_START       42   // 42 * (48000 / 1024) = 2000 Hz
-#define BIN_END         64   // 64 * (48000 / 1024) = 3000 Hz
+#define Freq_START_HZ               2000 // Start frequency in Hz
+#define Freq_END_HZ                 3000 // End frequency in Hz
+#define BIN_START                   ((int)((Freq_START_HZ * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate start bin
+#define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
+#define THRESHOLD_DB                -50.0f  // dB threshold for detection
+#define DETECT_COUNT                5      // Number of consecutive detections to trigger alarm
 
-#define THRESHOLD_DB    -50.0f  // dB threshold for detection
-#define DETECT_COUNT    5      // Number of consecutive detections to trigger alarm
+#define NUM_BINS                    (FFT_SIZE / 2)  // Number of FFT bins for real FFT
+#define LONG_WINDOW_FRAMES          24  // ~1s at 48kHz and 2048 FFT size (24 * 2048 / 48000 ≈ 1.024s)
 
+static float avgSpectrum[NUM_BINS];
+static int frameCount = 0;
 static int detectionCounter = 0;
 
 // Forward declarations
@@ -109,9 +115,14 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
 {
     const float window_gain = 0.54f;     // Hamming
     const float ref = FFT_SIZE * window_gain;
-    bool detected = false;
-
     
+
+    /* -------------------------------------------------------------------
+     * short-window FFT analysis, quick to trigger but more prone 
+     * to false alarms.
+     * -------------------------------------------------------------------*/
+        
+    bool detected = false;
     for (int i = startBin; i <= endBin; i++)
     {
         float re = fftData[2*i];
@@ -144,6 +155,51 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         
         detectionCounter = 0;
     }
+
+
+    /* -------------------------------------------------------------------
+     * Long-window FFT analysis, averaging over LONG_WINDOW_FRAMES Takes 
+     * time to trigger but more robust to false alarms.
+     * -------------------------------------------------------------------*/
+    /*
+    // Magnitude + running average
+    for (int i = 0; i < NUM_BINS; i++) {
+        float re = fftData[2*i];
+        float im = fftData[2*i + 1];
+        float mag = sqrtf(re*re + im*im);
+
+        avgSpectrum[i] = (avgSpectrum[i] * frameCount + mag) / (frameCount + 1);
+    }
+
+    frameCount++;
+
+    // Check long-window detection
+    if (frameCount >= LONG_WINDOW_FRAMES) {
+        bool detected = false;
+
+        for (int i = BIN_START; i <= BIN_END; i++) {
+            float powerDB = 20.0f * log10f((avgSpectrum[i] / ref) + 1e-12f);
+            if (powerDB > threshold_dB) {  // adjust threshold
+                detected = true;
+                break;
+            }
+        }
+
+        if (detected)
+            detectionCounter++;
+        else
+            detectionCounter = 0;
+
+        if (detectionCounter >= DETECT_COUNT) {
+            printf("🚨 Fire Alarm detected!\n");
+            detectionCounter = 0;
+        }
+
+        // Reset averaging
+        frameCount = 0;
+        memset(avgSpectrum, 0, sizeof(avgSpectrum));
+    }
+    */
 }
 
 // Start FFT Task

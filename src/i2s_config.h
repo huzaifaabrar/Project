@@ -12,7 +12,7 @@
 #define I2S_SAMPLE_BITS       I2S_DATA_BIT_WIDTH_32BIT      // or 16
 
 // FFT-related settings
-#define SAMPLE_BUFFER_SIZE    2048     // Number of samples per FFT frame
+#define SAMPLE_BUFFER_SIZE    4096     // Number of samples per FFT frame
 #define BYTES_PER_SAMPLE      (I2S_SAMPLE_BITS / 8)
 #define BUFFER_SIZE_BYTES     (SAMPLE_BUFFER_SIZE * BYTES_PER_SAMPLE)
 #define BUFFER_READ_SIZE      SAMPLE_BUFFER_SIZE * sizeof(int32_t)

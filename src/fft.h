@@ -10,7 +10,7 @@
 #define FFT_TASK_PRIORITY     4
 
 // FFT Settings
-#define FFT_SIZE              1024
+#define FFT_SIZE              2048  // Must be power of 2 and <= SAMPLE_BUFFER_SIZE
 #define SAMPLE_RATE           I2S_SAMPLE_RATE_HZ 
 
 // Function Prototypes
