@@ -169,7 +169,7 @@ void vI2S_StartReaderTask(void)
         NULL,
         TASK_I2S_READER_PRIORITY,
         &xMicTaskHandle, // Save task handle
-        1);  
+        0);  
 
     configASSERT(res == pdPASS);
 }

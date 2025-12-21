@@ -5,7 +5,7 @@
 /**
  * @brief Initialize Wi-Fi in STA mode and connect to AP
  */
-void wifi_init_sta(void);
+void vWifiInitSta(void);
 
 /**
  * @brief Check whether ESP32 is connected and has IP

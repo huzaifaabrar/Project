@@ -262,5 +262,14 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
 void vStartFFTTask(QueueHandle_t xAudioBufferQueue)
 {
     initWindowRef();  // precompute window reference
-    xTaskCreate(vFFTProcessorTask, FFT_TASK_NAME, FFT_TASK_STACK, xAudioBufferQueue, FFT_TASK_PRIORITY, NULL);
+    xTaskCreatePinnedToCore(
+        vFFTProcessorTask,       // Task function
+        FFT_TASK_NAME,           // Name
+        FFT_TASK_STACK,          // Stack size
+        xAudioBufferQueue,       // Parameters
+        FFT_TASK_PRIORITY,       // Priority
+        NULL,                    // Task handle
+        0                        // Core 0
+    );
 }
+

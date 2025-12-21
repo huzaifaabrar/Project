@@ -37,7 +37,7 @@ static void wifi_event_handler(void *arg,
     }
 }
 
-void wifi_init_sta(void)
+void vWifiInitSta(void)
 {
     esp_err_t ret;
 

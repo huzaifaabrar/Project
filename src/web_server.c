@@ -141,7 +141,7 @@ void vWebNotifyTask(void *pvParameters)
 /* -----------------------------
  * Start server
  * ----------------------------- */
-void webserver_start(void)
+void vWebServerStart(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 8;
@@ -167,8 +167,16 @@ void webserver_start(void)
     // Create event queue
     xFireAlarmEventQueue = xQueueCreate(5, sizeof(web_event_t));
 
-    // Start notification task
-    xTaskCreate(vWebNotifyTask, "WebNotifyTask", 4096, NULL, 5, &xWebNotifyTaskHandle);
+    // Start notification task pinned to Core 1
+    xTaskCreatePinnedToCore(
+        vWebNotifyTask,             // Task function
+        TASK_WEB_READER_NAME,       // Name
+        TASK_WEB_READER_STACK,      // Stack size
+        NULL,                       // Parameters
+        TASK_WEB_READER_PRIORITY,   // Priority
+        &xWebNotifyTaskHandle,      // Task handle
+        1                           // Core 1
+    );
 
     ESP_LOGI(TAG, "Web server started");
 }
