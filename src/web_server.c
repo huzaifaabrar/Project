@@ -27,7 +27,7 @@ static const char index_html[] =
 "  </style>\n"
 "</head>\n"
 "<body>\n"
-"  <h1>ESP32 Fire Alarm Monitor</h1>\n"
+"  <h1>🚨 ESP32 Fire Alarm Monitor 🚨</h1>\n"
 "  <div id='log'>System Normal</div>\n"
 "\n"
 "  <script>\n"

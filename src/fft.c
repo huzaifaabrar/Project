@@ -6,24 +6,16 @@
 #include "esp_log.h"
 #include <math.h>
 #include "web_server.h"
-
+#include "config.h"
 
 
 // TAG for logging
 static const char *TAG = "FFT";
 
-#define USE_LONG_WINDOW   0   // 1 = long-window, 0 = short-window
-
-
 static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag, ...]
 
-
-// Example bin range to monitor (e.g., 2 kHz to 3 kHz)
-#define Freq_START_HZ               2750 // Start frequency in Hz
-#define Freq_END_HZ                 3250 // End frequency in Hz
 #define BIN_START                   ((int)((Freq_START_HZ * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate start bin
 #define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
-#define THRESHOLD_DB                -50.0f  // dB threshold for detection
 #if USE_LONG_WINDOW
     #define DETECT_COUNT             2      // Number of consecutive detections to trigger alarm
 #else

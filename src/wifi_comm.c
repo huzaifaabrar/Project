@@ -5,9 +5,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
-
-#define WIFI_SSID      "TP Link"
-#define WIFI_PASSWORD  "50779394@#"
+#include "config.h"
 
 static const char *TAG = "wifi_comm";
 static bool s_wifi_connected = false;
