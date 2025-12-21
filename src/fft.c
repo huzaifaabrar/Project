@@ -1,9 +1,16 @@
 #include "fft.h"
 #include "i2s_config.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include "esp_dsp.h"
+#include "esp_log.h"
 #include <math.h>
+#include "web_server.h"
 
+
+
+// TAG for logging
+static const char *TAG = "FFT";
 
 #define USE_LONG_WINDOW   0   // 1 = long-window, 0 = short-window
 
@@ -18,13 +25,13 @@ static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag
 #define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
 #define THRESHOLD_DB                -50.0f  // dB threshold for detection
 #if USE_LONG_WINDOW
-    #define DETECT_COUNT             5      // Number of consecutive detections to trigger alarm
+    #define DETECT_COUNT             2      // Number of consecutive detections to trigger alarm
 #else
-    #define DETECT_COUNT             10      // Number of consecutive detections to trigger alarm
+    #define DETECT_COUNT             5      // Number of consecutive detections to trigger alarm
 #endif
 
 #define NUM_BINS                    (FFT_SIZE / 2)  // Number of FFT bins for real FFT
-#define LONG_WINDOW_SECONDS         0.5f   // 1 second
+#define LONG_WINDOW_SECONDS         4.0f   // 1 second
 #define LONG_WINDOW_FRAMES          ((int)ceil(LONG_WINDOW_SECONDS * I2S_SAMPLE_RATE_HZ / FFT_SIZE))
 
 
@@ -67,7 +74,7 @@ void vFFTProcessorTask(void* pvParameters)
     esp_err_t ret = dsps_fft2r_init_fc32(NULL, FFT_SIZE);
     if (ret != ESP_OK)
     {
-        printf("Error: Failed to initialize FFT: %d\n", ret);
+        ESP_LOGE(TAG, "Failed to initialize FFT: %d", ret);
         vTaskDelete(NULL);
     }
 
@@ -181,8 +188,20 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
 
         if (detectionCounter >= DETECT_COUNT)
         {
-            printf("🚨 Fire Alarm detected!\n");
             detectionCounter = 0;
+        
+            // Send event to web server queue
+            if (xFireAlarmEventQueue != NULL)
+            {
+                web_event_t event;
+                event.type = EVENT_FIRE_ALARM;
+                event.timestamp_ms = esp_timer_get_time() / 1000; // ms since boot 
+                BaseType_t xStatus = xQueueSend(xFireAlarmEventQueue, &event, 0); // non-blocking
+                if (xStatus != pdPASS)
+                {
+                    ESP_LOGW(TAG, "Failed to send fire alarm event to queue");
+                }
+            }        
         }
 
         frameCount = 0;
@@ -219,8 +238,21 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
 
     if (detectionCounter >= DETECT_COUNT)
     {
-        printf("🚨 Alarm triggered!\n");
         detectionCounter = 0;
+        
+        // Send event to web server queue
+        if (xFireAlarmEventQueue != NULL)
+        {
+            web_event_t event;
+            event.type = EVENT_FIRE_ALARM;
+            event.timestamp_ms = esp_timer_get_time() / 1000; // ms since boot 
+            BaseType_t xStatus = xQueueSend(xFireAlarmEventQueue, &event, 0); // non-blocking
+            if (xStatus != pdPASS)
+            {
+                ESP_LOGW(TAG, "Failed to send fire alarm event to queue");
+            }
+        }
+        
     }
 #endif
 }

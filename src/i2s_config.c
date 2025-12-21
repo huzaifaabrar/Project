@@ -1,4 +1,5 @@
 #include "i2s_config.h"
+#include "esp_log.h"
 
 // ------------------------------------
 // GLOBALS
@@ -7,6 +8,9 @@ i2s_chan_handle_t xI2S_RXChanHandle = NULL;
 TaskHandle_t xMicTaskHandle = NULL;  // Define the task handle
 QueueHandle_t xAudioBufferQueue = NULL;  // Define the queue handle
 
+
+// TAG for logging
+static const char *TAG = "I2S_Config";
 
 // Ping-pong buffers for small chunks
  int32_t I2S_Buffer_A[SAMPLE_BUFFER_SIZE];
@@ -58,7 +62,7 @@ void vTaskI2SReader(void *pvParameters)
                 BaseType_t xStatus = xQueueSendToBack(xAudioBufferQueue, &inactiveBuffer, 0);  // No wait
                 if (xStatus != pdPASS)
                 {
-                    printf("Warning: Failed to send buffer to queue\n");
+                    ESP_LOGW(TAG, "Failed to send buffer to queue");
                 }
             }
 
@@ -66,7 +70,7 @@ void vTaskI2SReader(void *pvParameters)
         }
         else
         {
-            printf("I2S read error: %d, bytes: %u\n", err, (unsigned)bytesRead);
+            ESP_LOGE(TAG, "I2S read error: %d, bytes: %u", err, (unsigned)bytesRead);
         }
     }
 }
