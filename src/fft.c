@@ -78,7 +78,7 @@ void vFFTProcessorTask(void* pvParameters)
 
 
             // Normalize samples to float
-            int n = normalizeBuffer(audioBuffer, vReal, SAMPLE_BUFFER_SIZE);
+            int n = normalizeBuffer(audioBuffer, vReal, SAMPLE_BUFFER_SIZE);            
 
             // Apply windowing
             applyWindow(vReal, n);
@@ -94,14 +94,14 @@ void vFFTProcessorTask(void* pvParameters)
             dsps_fft2r_fc32(vReal, n);       // Real FFT
             dsps_bit_rev_fc32(vReal, n);     // Bit-reversal
             
-            // // Optional debug
+            
+            // Optional debug
             // printf("Starting samples printing\n");
-            // for (int i = 0; i < SAMPLE_BUFFER_SIZE; i++) {
-            //         // printf("index %3d:  (%ld)\n", i, samples[i]);   //signed decimal
-            //         printf("%f\n", vReal[i]);
+            // for (int i = 0; i < SAMPLE_BUFFER_SIZE; i += 8) {
+            //         printf("index %3d:  (%f)\n", i, vReal[i]);   //signed decimal
+            //         // printf("%f\n", vReal[i]);
             //     }
             // printf("Finished samples printing\n");
-            
 
 
             // Analyze bins
@@ -117,8 +117,8 @@ static int normalizeBuffer(int32_t *buffer, float *real, int length)
     // const float scale = 1.0f / 16777216.0f;   // 2²⁴
     // const float scale = 1.0f / 8388608.0f;   // 2²³
     int out = 0;
-    for (int i = 0; i < length; i += 2)
-    {
+    for (int i = 0; i < length; i ++)
+    { 
         // int32_t sample24 = buffer[i] >> 8;  // Convert 32-bit to 24-bit
         int32_t sample24 = buffer[i];  // Use full 32-bit
         real[out++] = (float)sample24 * scale;
@@ -126,6 +126,7 @@ static int normalizeBuffer(int32_t *buffer, float *real, int length)
     
     return out;
 }
+
 
 // Apply Hamming window
 static void applyWindow(float *data, int length)
@@ -151,6 +152,12 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
     {
         float re = fftData[2*i];
         float im = fftData[2*i + 1];
+            if (isnan(im)) {
+                im = 0.0f;
+            }
+            if (isnan(re)) {
+                re = 0.0f;
+            }
         float mag = sqrtf(re*re + im*im);
 
         if (i != 0 && i != (FFT_SIZE / 2))
@@ -208,13 +215,23 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
     {
         float re = fftData[2*i];
         float im = fftData[2*i + 1];
-
+            if (isnan(im)) {
+                im = 0.0f;
+            }
+            if (isnan(re)) {
+                re = 0.0f;
+            }
         float mag = sqrtf(re*re + im*im);
 
         if (i != 0 && i != (FFT_SIZE / 2))
             mag *= 2.0f;
 
         float powerDB = 20.0f * log10f((mag / window_sum) + 1e-12f);
+
+        // Optional debug 
+            // printf("index %3d:  (%f)\n", i, powerDB);   //signed decimal    
+            // printf("index %3d:  (%f)\n", i, im);   //signed decimal
+            // printf("%f\n", vReal[i]);
 
         if (powerDB > threshold_dB)
         {
@@ -223,7 +240,7 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         }
     }
 
-    if (detected)
+    if (detected) 
         detectionCounter++;
     else if (detectionCounter > 0)
         detectionCounter--;

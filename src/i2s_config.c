@@ -47,14 +47,14 @@ void vTaskI2SReader(void *pvParameters)
             activeBuffer = inactiveBuffer;
             inactiveBuffer = tmp;
 
-            /*// Optional debug
-            printf("Starting samples printing\n");
-            for (int i = 0; i < samplesRead; i++) {
-                    // printf("index %3d:  (%ld)\n", i, samples[i]);   //signed decimal
-                    printf("%ld\n", inactiveBuffer[i]);
-                }
-            printf("Finished samples printing\n");
-            */
+            // Optional debug
+            // printf("Starting samples printing\n");
+            // for (int i = 0; i < samplesRead; i++) {
+            //         printf("index %3d:  (%ld)\n", i, inactiveBuffer[i]);   //signed decimal
+            //         // printf("%ld\n", inactiveBuffer[i]);
+            //     }
+            // printf("Finished samples printing\n");
+            
             
             // Send inactiveBuffer to FFT task via queue
             if (xAudioBufferQueue != NULL)
@@ -96,11 +96,31 @@ void vI2S_InitRX(void)
     ESP_ERROR_CHECK(xErr);
 
     // Clock config
-    i2s_std_clk_config_t clkCfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE_HZ);
+    // i2s_std_clk_config_t clkCfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE_HZ);
+    i2s_std_clk_config_t clkCfg = {
+        .sample_rate_hz = I2S_SAMPLE_RATE_HZ,
+        .clk_src = I2S_CLK_SRC_DEFAULT,
+        .ext_clk_freq_hz = 0,
+        .mclk_multiple = I2S_MCLK_MULTIPLE_256,  // Change to 384 if 24-bit else if 32-bit change to 256
+        .bclk_div = 8,
+    };
 
     // Slot config (Mono, 32-bit)
+    // i2s_std_slot_config_t slotCfg =
+    //     I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_SAMPLE_BITS, I2S_SLOT_MODE_MONO);
     i2s_std_slot_config_t slotCfg =
-        I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_SAMPLE_BITS, I2S_SLOT_MODE_MONO);
+    {
+        .data_bit_width = I2S_SAMPLE_BITS,
+        .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
+        .slot_mode = I2S_SLOT_MODE_MONO,
+        .slot_mask = I2S_STD_SLOT_LEFT,  // Use left slot for mono
+        .ws_width = I2S_SLOT_BIT_WIDTH_32BIT,
+        .ws_pol = false,
+        .bit_shift = true,
+        .left_align = true,
+        .big_endian = false,
+        .bit_order_lsb = false,
+    };
 
     // GPIO config (adjust pins as needed)
     i2s_std_gpio_config_t gpioCfg = {
@@ -153,7 +173,7 @@ void setupMicrophoneTimer(void)
         .name = "MicrophoneTimer"
     };
     esp_timer_create(&timerArgs, &periodicTimer);
-    esp_timer_start_periodic(periodicTimer, 20000);  // 20 ms period = 50 Hz
+    esp_timer_start_periodic(periodicTimer, 85333);  // 85.33 ms period
 }
 
 
