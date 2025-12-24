@@ -8,8 +8,8 @@
 /* -----------------------------
  * Wi-Fi Configuration
  * ----------------------------- */
-#define WIFI_SSID      "Pixel_2012" // Your Wi-Fi SSID
-#define WIFI_PASSWORD  "zaifi1234"  // Your Wi-Fi Password
+#define WIFI_SSID      "xxxxxxxxx" // Your Wi-Fi SSID
+#define WIFI_PASSWORD  "xxxxxxxxx"  // Your Wi-Fi Password
 
 /* -----------------------------
  * FFT / Audio Processing
