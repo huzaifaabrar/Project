@@ -8,7 +8,7 @@
 #include "freertos/queue.h"
 
 // I2S config constants
-#define I2S_SAMPLE_RATE_HZ    48000   // Match your mic specs
+#define I2S_SAMPLE_RATE_HZ    48000.0f   // Match your mic specs
 #define I2S_SAMPLE_BITS       I2S_DATA_BIT_WIDTH_32BIT      // or 16
 
 // FFT-related settings

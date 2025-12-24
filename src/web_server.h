@@ -11,7 +11,7 @@ typedef enum {
 
 typedef struct {
     web_event_type_t type;
-    int i;
+    int bin;
     int64_t timestamp_ms;
 } web_event_t;
 

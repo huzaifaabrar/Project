@@ -16,7 +16,7 @@ static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag
 
 #define BIN_START                   ((int)((Freq_START_HZ * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate start bin
 #define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
-#define FREQ_RESO                   ((int)(I2S_SAMPLE_RATE_HZ / FFT_SIZE))
+#define FREQ_RESO                   ((float)I2S_SAMPLE_RATE_HZ / FFT_SIZE)
 #if USE_LONG_WINDOW
     #define DETECT_COUNT             1      // Number of consecutive detections to trigger alarm
 #else
@@ -24,7 +24,7 @@ static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag
 #endif
 
 #define NUM_BINS                    (FFT_SIZE / 2)  // Number of FFT bins for real FFT
-#define LONG_WINDOW_SECONDS         4.0f   // 1 second
+#define LONG_WINDOW_SECONDS         4.0f   // 4 seconds
 #define LONG_WINDOW_FRAMES          ((int)ceil(LONG_WINDOW_SECONDS * I2S_SAMPLE_RATE_HZ / FFT_SIZE))
 
 
@@ -144,8 +144,7 @@ static void applyWindow(float *data, int length)
 static void analyzeBins(float *fftData, int startBin, int endBin, float threshold_dB)
 {
     bool detected = false;
-    int bin = 0;
-    float max_bin = 0;
+    int freq_detected = 0;
     float tmp_powerDB = -500;
     int tmp_i = 0;
 
@@ -178,11 +177,17 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         for (int i = startBin; i <= endBin; i++)
         {
             float powerDB = 20.0f * log10f((avgSpectrum[i] / window_sum) + 1e-12f);
-            if (powerDB > threshold_dB)
-            {
-                detected = true;
-                break;
-            }
+            if (powerDB > tmp_powerDB) {
+            tmp_powerDB = powerDB;
+            tmp_i = i;
+        }
+        }
+
+        if (tmp_powerDB > threshold_dB)
+        {
+            detected = true;
+            freq_detected = (int)(tmp_i * FREQ_RESO + 0.5f); // Rounds to nearest integer
+            // printf("%d\n", freq_detected);
         }
 
         if (detected)
@@ -199,13 +204,14 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
             {
                 web_event_t event;
                 event.type = EVENT_FIRE_ALARM;
+                event.bin = freq_detected;
                 event.timestamp_ms = esp_timer_get_time() / 1000; // ms since boot 
                 BaseType_t xStatus = xQueueSend(xFireAlarmEventQueue, &event, 0); // non-blocking
                 if (xStatus != pdPASS)
                 {
                     ESP_LOGW(TAG, "Failed to send fire alarm event to queue");
                 }
-            }        
+            }       
         }
 
         frameCount = 0;
@@ -238,28 +244,17 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
             tmp_i = i;
         }
 
-
-
         // Optional debug 
             // printf("index %3d:  (%f)\n", i, powerDB);   //signed decimal    
             // printf("index %3d:  (%f)\n", i, im);   //signed decimal
             // printf("%f\n", vReal[i]);
-
-        // if (powerDB > threshold_dB)
-        // {
-        //     detected = true;
-        //     bin = i * FREQ_RESO;
-        //     // printf("%d\n", bin);
-        //     break;
-        // }
     }
 
     if (tmp_powerDB > threshold_dB)
     {
         detected = true;
-        // bin = tmp_i * FREQ_RESO;
-        bin = tmp_i;
-        // printf("%d\n", bin);
+        freq_detected = (int)(tmp_i * FREQ_RESO + 0.5f); // Rounds to nearest integer
+        // printf("%d\n", freq_detected);
     }
 
     if (detected) 
@@ -276,7 +271,7 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         {
             web_event_t event;
             event.type = EVENT_FIRE_ALARM;
-            event.i = bin;
+            event.bin = freq_detected;
             event.timestamp_ms = esp_timer_get_time() / 1000; // ms since boot 
             BaseType_t xStatus = xQueueSend(xFireAlarmEventQueue, &event, 0); // non-blocking
             if (xStatus != pdPASS)
