@@ -16,8 +16,9 @@ static float vReal[SAMPLE_BUFFER_SIZE];  // Interleaved: [Real, Imag, Real, Imag
 
 #define BIN_START                   ((int)((Freq_START_HZ * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate start bin
 #define BIN_END                     ((int)((Freq_END_HZ   * FFT_SIZE) / I2S_SAMPLE_RATE_HZ))   // calculate end bin
+#define FREQ_RESO                   ((int)(I2S_SAMPLE_RATE_HZ / FFT_SIZE))
 #if USE_LONG_WINDOW
-    #define DETECT_COUNT             2      // Number of consecutive detections to trigger alarm
+    #define DETECT_COUNT             1      // Number of consecutive detections to trigger alarm
 #else
     #define DETECT_COUNT             5      // Number of consecutive detections to trigger alarm
 #endif
@@ -143,6 +144,10 @@ static void applyWindow(float *data, int length)
 static void analyzeBins(float *fftData, int startBin, int endBin, float threshold_dB)
 {
     bool detected = false;
+    int bin = 0;
+    float max_bin = 0;
+    float tmp_powerDB = -500;
+    int tmp_i = 0;
 
 #if USE_LONG_WINDOW
     // -------------------------------
@@ -227,17 +232,34 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
             mag *= 2.0f;
 
         float powerDB = 20.0f * log10f((mag / window_sum) + 1e-12f);
+        
+        if (powerDB > tmp_powerDB) {
+            tmp_powerDB = powerDB;
+            tmp_i = i;
+        }
+
+
 
         // Optional debug 
             // printf("index %3d:  (%f)\n", i, powerDB);   //signed decimal    
             // printf("index %3d:  (%f)\n", i, im);   //signed decimal
             // printf("%f\n", vReal[i]);
 
-        if (powerDB > threshold_dB)
-        {
-            detected = true;
-            break;
-        }
+        // if (powerDB > threshold_dB)
+        // {
+        //     detected = true;
+        //     bin = i * FREQ_RESO;
+        //     // printf("%d\n", bin);
+        //     break;
+        // }
+    }
+
+    if (tmp_powerDB > threshold_dB)
+    {
+        detected = true;
+        // bin = tmp_i * FREQ_RESO;
+        bin = tmp_i;
+        // printf("%d\n", bin);
     }
 
     if (detected) 
@@ -254,6 +276,7 @@ static void analyzeBins(float *fftData, int startBin, int endBin, float threshol
         {
             web_event_t event;
             event.type = EVENT_FIRE_ALARM;
+            event.i = bin;
             event.timestamp_ms = esp_timer_get_time() / 1000; // ms since boot 
             BaseType_t xStatus = xQueueSend(xFireAlarmEventQueue, &event, 0); // non-blocking
             if (xStatus != pdPASS)

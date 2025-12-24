@@ -112,7 +112,7 @@ void vWebNotifyTask(void *pvParameters)
                 {
                     // Prepare log message
                     char log_msg[128];
-                    snprintf(log_msg, sizeof(log_msg), "[%lld ms] 🚨 Fire Alarm detected!", event.timestamp_ms);
+                    snprintf(log_msg, sizeof(log_msg), "[%lld ms] 🚨 Fire Alarm detected! at Frequency %d", event.timestamp_ms, event.i);
 
                     // Print to UART
                     printf("%s\n", log_msg);
